@@ -93,7 +93,7 @@ export interface GenerationSettings {
 
   // White BG Retouch specific fields
   productMaterial: ProductMaterial;
-  whiteBgWebPromptType?: 'A' | 'B';
+  whiteBgWebPromptType?: 'A' | 'B' | 'C';
 
   // Studio specific fields
   emptySpacePosition: EmptySpacePosition[];

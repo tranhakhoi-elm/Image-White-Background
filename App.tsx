@@ -325,6 +325,7 @@ const App: React.FC = () => {
         <div className="flex gap-2 pt-2">
           <button disabled={!settings.referenceImage} onClick={() => startGeneration({ whiteBgWebPromptType: 'A' })} className="flex-1 py-4 bg-cyan-500 text-black font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ mềm</button>
           <button disabled={!settings.referenceImage} onClick={() => startGeneration({ whiteBgWebPromptType: 'B' })} className="flex-1 py-4 bg-blue-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ gắt</button>
+          <button disabled={!settings.referenceImage} onClick={() => startGeneration({ whiteBgWebPromptType: 'C' })} className="flex-1 py-4 bg-indigo-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bộ sản phẩm</button>
         </div>
       </div>
     </div>
@@ -442,7 +443,7 @@ const App: React.FC = () => {
     if (image.settings.visualStyle === 'WHITE_BG_WEBSITE' && image.settings.productCode) {
       const timePart = parseInt(image.id.split('-')[0] || '0', 10);
       const randomNum = ((timePart + (image.variant || 0)) % 100) + 1;
-      return `${image.settings.productCode}${randomNum}.png`;
+      return `${image.settings.productCode} ${randomNum}.png`;
     }
     return `elmich-ai-${image.id}.png`;
   };

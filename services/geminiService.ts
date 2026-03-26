@@ -386,6 +386,51 @@ Quality:
 ABSOLUTE RULE:
 - only adjust lighting and shadow, nothing else
       `;
+    } else if (settings.whiteBgWebPromptType === 'C') {
+      finalPrompt = `
+Ultra realistic lighting and shadow refinement for a set of cookware on white background.
+
+STRICT PRESERVATION:
+- Keep all original products exactly as they are (no change in number, position, scale, angle, color, or material)
+- Do NOT duplicate or remove any items
+- Do NOT rearrange composition
+
+Lighting:
+- soft directional key light from upper-left at 45 degrees
+- consistent lighting across all items
+- clean commercial studio lighting (premium cookware advertising style)
+- smooth highlights on lids and body surfaces
+- subtle controlled reflections on metal handles
+- no harsh highlights or overexposure
+
+Shadow:
+- each product must have its own shadow, correctly attached to its base
+- shadow direction: to the right and slightly backward (consistent for all items)
+
+Shadow structure:
+- soft elliptical shadow under each pot and pan base
+- elongated shadow from each handle extending to the right-back
+- overlapping shadows where products are close to each other (natural interaction)
+- darker contact shadow under each base for grounding
+- softer, diffused shadow outward
+
+Shadow quality:
+- soft edges, smooth gradient fade
+- no floating shadows, no merged unnatural shadow blobs
+- shadows must respect spacing and depth between objects
+
+Background:
+- clean white or very light grey
+- no texture, no color contamination
+
+Quality:
+- high clarity, balanced contrast
+- realistic depth between multiple objects
+- premium commercial product look
+
+ABSOLUTE RULE:
+- only adjust lighting and shadow, nothing else
+      `;
     } else {
       finalPrompt = `
 Ultra realistic lighting and shadow refinement for a single thermos bottle on white background.
