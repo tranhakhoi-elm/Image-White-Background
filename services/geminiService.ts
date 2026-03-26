@@ -265,9 +265,11 @@ export const editProductImage = async (base64Image: string, prompt: string, mode
   const mimeType = mimeTypeMatch[1];
   const data = mimeTypeMatch[2];
 
+  const finalPrompt = prompt + `\n\nCRITICAL REQUIREMENT: The entire product and its shadow must be fully contained within the frame, ensuring the edges of the image are pure white so it blends seamlessly when uploaded to a website.`;
+
   const parts: any[] = [
     { inlineData: { data, mimeType } },
-    { text: prompt }
+    { text: finalPrompt }
   ];
 
   try {
@@ -602,6 +604,8 @@ ABSOLUTE RULE:
       `;
     }
   }
+
+  finalPrompt += `\n\nCRITICAL REQUIREMENT: The entire product and its shadow must be fully contained within the frame, ensuring the edges of the image are pure white so it blends seamlessly when uploaded to a website.`;
 
   const parts: any[] = [{ text: finalPrompt }];
   
