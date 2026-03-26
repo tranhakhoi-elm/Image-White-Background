@@ -254,7 +254,7 @@ export const analyzeStudioConcept = async (productName: string, dimensions: stri
   }
 };
 
-export const editProductImage = async (base64Image: string, prompt: string, modelName: string = 'gemini-3.1-flash-image-preview', imageSize: string = '1K'): Promise<string> => {
+export const editProductImage = async (base64Image: string, prompt: string, modelName: string = 'gemini-3.1-flash-image-preview', imageSize: string = '2K'): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   
   const mimeTypeMatch = base64Image.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);

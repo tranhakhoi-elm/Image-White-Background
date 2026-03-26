@@ -77,7 +77,7 @@ const App: React.FC = () => {
     props: [],
     tone: TONE_STYLES[0],
     aspectRatio: '1:1',
-    imageSize: '1K',
+    imageSize: '2K',
     aiModel: 'gemini-2.5-flash-image',
     numImages: 1 
   });
@@ -94,7 +94,7 @@ const App: React.FC = () => {
   const [editPrompt, setEditPrompt] = useState('');
   const [isEditingImage, setIsEditingImage] = useState(false);
   const [editModel, setEditModel] = useState('gemini-3.1-flash-image-preview');
-  const [editQuality, setEditQuality] = useState<ImageSize>('1K');
+  const [editQuality, setEditQuality] = useState<ImageSize>('2K');
   const [hasApiKey, setHasApiKey] = useState(true);
 
   useEffect(() => {
@@ -311,15 +311,6 @@ const App: React.FC = () => {
           <input type="file" hidden ref={refFileRef} accept="image/*" onChange={e => onImageUpload(e, 'reference')} />
         </div>
 
-        <div>
-           <label className="block text-[9px] font-bold text-slate-400 uppercase mb-2">Chất lượng hình ảnh</label>
-           <select className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-cyan-400" value={settings.imageSize} onChange={e => setSettings({...settings, imageSize: e.target.value as ImageSize})}>
-              <option value="1K" className="bg-[#051610]">1K Standard</option>
-              <option value="2K" className="bg-[#051610]">2K Pro</option>
-              <option value="4K" className="bg-[#051610]">4K Ultra HD</option>
-           </select>
-        </div>
-
         {renderModelSelection()}
 
         <div className="flex gap-2 pt-2">
@@ -397,17 +388,11 @@ const App: React.FC = () => {
            </div>
          </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <div>
            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Tỷ lệ</label>
            <select className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-[10px] text-white outline-none" value={settings.aspectRatio} onChange={e => setSettings({...settings, aspectRatio: e.target.value as AspectRatio})}>
               <option value="1:1" className="bg-[#051610]">1:1 Vuông</option><option value="16:9" className="bg-[#051610]">16:9 HD</option><option value="9:16" className="bg-[#051610]">9:16</option><option value="4:3" className="bg-[#051610]">4:3</option><option value="3:4" className="bg-[#051610]">3:4</option><option value="1:4" className="bg-[#051610]">1:4</option><option value="4:1" className="bg-[#051610]">4:1</option>
-           </select>
-        </div>
-        <div>
-           <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Chất lượng</label>
-           <select className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-[10px] text-white outline-none" value={settings.imageSize} onChange={e => setSettings({...settings, imageSize: e.target.value as ImageSize})}>
-              <option value="1K" className="bg-[#051610]">1K Standard</option><option value="2K" className="bg-[#051610]">2K Pro</option><option value="4K" className="bg-[#051610]">4K Ultra</option>
            </select>
         </div>
       </div>
@@ -504,16 +489,6 @@ const App: React.FC = () => {
                       >
                         <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
                         <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
-                      </select>
-                      <select 
-                        value={editQuality}
-                        onChange={e => setEditQuality(e.target.value as ImageSize)}
-                        disabled={isEditingImage}
-                        className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-[#caf0f8] transition-all"
-                      >
-                        <option value="1K">1K (Nhanh)</option>
-                        <option value="2K">2K (Sắc nét)</option>
-                        <option value="4K">4K (Siêu nét)</option>
                       </select>
                     </div>
                     <div className="flex gap-2">
