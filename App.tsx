@@ -78,7 +78,7 @@ const App: React.FC = () => {
     tone: TONE_STYLES[0],
     aspectRatio: '1:1',
     imageSize: '2K',
-    aiModel: 'gemini-2.5-flash-image',
+    aiModel: 'gemini-3.1-flash-image-preview',
     numImages: 1 
   });
   
@@ -96,6 +96,7 @@ const App: React.FC = () => {
   const [editModel, setEditModel] = useState('gemini-3.1-flash-image-preview');
   const [editQuality, setEditQuality] = useState<ImageSize>('2K');
   const [hasApiKey, setHasApiKey] = useState(true);
+  const [imageUrlInput, setImageUrlInput] = useState('');
 
   useEffect(() => {
     const checkKey = async () => {
@@ -183,7 +184,33 @@ const App: React.FC = () => {
     setAppState(AppState.GENERATING);
     setLoadingMessage("Gemini Thinking đang chuẩn bị kiệt tác...");
     try {
-      const finalSettings = { ...settings, ...overrideSettings };
+      let finalReferenceImage = settings.referenceImage;
+      
+      if (!finalReferenceImage && imageUrlInput) {
+        setLoadingMessage("Đang tải ảnh từ URL...");
+        try {
+          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrlInput)}`;
+          const response = await fetch(proxyUrl);
+          if (!response.ok) throw new Error("Network response was not ok");
+          const blob = await response.blob();
+          finalReferenceImage = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          setSettings(prev => ({ ...prev, referenceImage: finalReferenceImage }));
+          setImageUrlInput('');
+        } catch (error) {
+          console.error("Lỗi khi tải ảnh từ URL:", error);
+          alert("Không thể tải ảnh từ URL. Vui lòng kiểm tra lại đường dẫn hoặc tải ảnh lên trực tiếp.");
+          setAppState(AppState.READY);
+          return;
+        }
+        setLoadingMessage("Gemini Thinking đang chuẩn bị kiệt tác...");
+      }
+
+      const finalSettings = { ...settings, referenceImage: finalReferenceImage, ...overrideSettings };
       const urls = await Promise.all(Array.from({ length: finalSettings.numImages }, (_, i) => generateProductImage(finalSettings, i + 1)));
       const time = Date.now();
       const newImages: GeneratedImage[] = urls.map((url, i) => ({ id: `${time}-${i}`, url, prompt: finalSettings.concept, timestamp: time, settings: { ...finalSettings }, variant: i + 1 }));
@@ -299,24 +326,44 @@ const App: React.FC = () => {
         </div>
 
         <div>
-          <label className="block text-[9px] font-bold text-slate-400 uppercase mb-2">Ảnh sản phẩm gốc</label>
+          <label className="block text-[9px] font-bold text-slate-400 uppercase mb-2">Ảnh sản phẩm gốc (Tải lên hoặc dán URL)</label>
+          <div className="flex gap-2 mb-2">
+            <input 
+              type="text" 
+              placeholder="Dán đường dẫn hình ảnh (URL)..." 
+              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-400" 
+              value={imageUrlInput} 
+              onChange={e => {
+                setImageUrlInput(e.target.value);
+                if (e.target.value) {
+                  setSettings(prev => ({ ...prev, referenceImage: null }));
+                }
+              }} 
+            />
+          </div>
           <div onClick={() => refFileRef.current?.click()} className="h-48 bg-white/5 border-2 border-dashed border-white/10 rounded-xl flex items-center justify-center cursor-pointer overflow-hidden group relative hover:border-cyan-400 transition-all">
-             {settings.referenceImage ? (
+             {(settings.referenceImage || imageUrlInput) ? (
                <>
-                 <img src={settings.referenceImage} className="h-full w-full object-contain" referrerPolicy="no-referrer" />
+                 <img src={settings.referenceImage || imageUrlInput} className="h-full w-full object-contain" referrerPolicy="no-referrer" onError={(e) => {
+                   // Hide broken image icon if URL is invalid
+                   (e.target as HTMLImageElement).style.display = 'none';
+                 }} onLoad={(e) => {
+                   (e.target as HTMLImageElement).style.display = 'block';
+                 }} />
                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center text-xs font-bold">Thay ảnh</div>
                </>
              ) : <span className="text-slate-400 text-xs font-bold uppercase group-hover:text-cyan-400">+ Tải ảnh SP gốc</span>}
           </div>
-          <input type="file" hidden ref={refFileRef} accept="image/*" onChange={e => onImageUpload(e, 'reference')} />
+          <input type="file" hidden ref={refFileRef} accept="image/*" onChange={e => {
+            onImageUpload(e, 'reference');
+            setImageUrlInput(''); // Clear URL if user uploads a file
+          }} />
         </div>
 
-        {renderModelSelection()}
-
         <div className="flex gap-2 pt-2">
-          <button disabled={!settings.referenceImage} onClick={() => startGeneration({ whiteBgWebPromptType: 'A' })} className="flex-1 py-4 bg-cyan-500 text-black font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ mềm</button>
-          <button disabled={!settings.referenceImage} onClick={() => startGeneration({ whiteBgWebPromptType: 'B' })} className="flex-1 py-4 bg-blue-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ gắt</button>
-          <button disabled={!settings.referenceImage} onClick={() => startGeneration({ whiteBgWebPromptType: 'C' })} className="flex-1 py-4 bg-indigo-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bộ sản phẩm</button>
+          <button disabled={!settings.referenceImage && !imageUrlInput} onClick={() => startGeneration({ whiteBgWebPromptType: 'A' })} className="flex-1 py-4 bg-cyan-500 text-black font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ mềm</button>
+          <button disabled={!settings.referenceImage && !imageUrlInput} onClick={() => startGeneration({ whiteBgWebPromptType: 'B' })} className="flex-1 py-4 bg-blue-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ gắt</button>
+          <button disabled={!settings.referenceImage && !imageUrlInput} onClick={() => startGeneration({ whiteBgWebPromptType: 'C' })} className="flex-1 py-4 bg-indigo-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bộ sản phẩm</button>
         </div>
       </div>
     </div>
@@ -341,26 +388,6 @@ const App: React.FC = () => {
       </div>
     );
   };
-
-  const renderModelSelection = () => (
-    <div className="space-y-2">
-      <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Chọn Model AI (Tối ưu chi phí)</label>
-      <div className="grid grid-cols-2 gap-2">
-        <button 
-          onClick={() => setSettings({...settings, aiModel: 'gemini-2.5-flash-image'})} 
-          className={`py-2 rounded-lg border text-[9px] font-bold transition-all ${settings.aiModel === 'gemini-2.5-flash-image' ? 'bg-[#caf0f8] text-black border-[#caf0f8]' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
-        >
-          Standard (Tiết kiệm)
-        </button>
-        <button 
-          onClick={() => setSettings({...settings, aiModel: 'gemini-3.1-flash-image-preview'})} 
-          className={`py-2 rounded-lg border text-[9px] font-bold transition-all ${settings.aiModel === 'gemini-3.1-flash-image-preview' ? 'bg-[#caf0f8] text-black border-[#caf0f8]' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
-        >
-          High Quality (Tối ưu)
-        </button>
-      </div>
-    </div>
-  );
 
   const renderCameraSettings = (onBack: () => void) => (
     <div className="space-y-5">
@@ -396,7 +423,6 @@ const App: React.FC = () => {
            </select>
         </div>
       </div>
-      {renderModelSelection()}
       <div className="flex gap-2">
         <button onClick={onBack} className="flex-1 py-4 border border-white/10 text-white rounded-xl uppercase text-[10px] font-bold">Quay lại</button>
         <button onClick={startGeneration} className="flex-[2] vibrant-button text-white font-bold py-4 rounded-xl uppercase text-[12px] shadow-xl">Tạo ảnh</button>
@@ -480,17 +506,6 @@ const App: React.FC = () => {
                     <Wand2 size={14} /> Chỉnh sửa ảnh bằng AI
                   </label>
                   <div className="flex flex-col gap-2">
-                    <div className="flex gap-2">
-                      <select 
-                        value={editModel}
-                        onChange={e => setEditModel(e.target.value)}
-                        disabled={isEditingImage}
-                        className="bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-[#caf0f8] transition-all"
-                      >
-                        <option value="gemini-3.1-flash-image-preview">Gemini 3.1 Flash Image</option>
-                        <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
-                      </select>
-                    </div>
                     <div className="flex gap-2">
                       <input 
                         type="text" 
