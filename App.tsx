@@ -189,15 +189,34 @@ const App: React.FC = () => {
       if (!finalReferenceImage && imageUrlInput) {
         setLoadingMessage("Đang tải ảnh từ URL...");
         try {
-          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrlInput)}`;
-          const response = await fetch(proxyUrl);
-          if (!response.ok) throw new Error("Network response was not ok");
-          const blob = await response.blob();
+          let blob: Blob | null = null;
+          const proxies = [
+            imageUrlInput, // Try direct first
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrlInput)}`,
+            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(imageUrlInput)}`,
+            `https://corsproxy.io/?${encodeURIComponent(imageUrlInput)}`
+          ];
+          
+          let lastError;
+          for (const url of proxies) {
+            try {
+              const response = await fetch(url);
+              if (response.ok) {
+                blob = await response.blob();
+                break;
+              }
+            } catch (e) {
+              lastError = e;
+            }
+          }
+
+          if (!blob) throw lastError || new Error("Failed to load image from URL");
+
           finalReferenceImage = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result as string);
             reader.onerror = reject;
-            reader.readAsDataURL(blob);
+            reader.readAsDataURL(blob!);
           });
           setSettings(prev => ({ ...prev, referenceImage: finalReferenceImage }));
           setImageUrlInput('');
