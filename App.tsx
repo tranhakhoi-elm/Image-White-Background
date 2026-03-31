@@ -471,9 +471,7 @@ const App: React.FC = () => {
 
   const getDownloadFileName = (image: GeneratedImage) => {
     if (image.settings.visualStyle === 'WHITE_BG_WEBSITE' && image.settings.productCode) {
-      const timePart = parseInt(image.id.split('-')[0] || '0', 10);
-      const randomNum = ((timePart + (image.variant || 0)) % 100) + 1;
-      return `${image.settings.productCode} ${randomNum}.png`;
+      return `${image.settings.productCode}.png`;
     }
     return `elmich-ai-${image.id}.png`;
   };
