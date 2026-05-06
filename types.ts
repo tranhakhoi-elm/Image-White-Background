@@ -132,6 +132,7 @@ export interface GeneratedImage {
   timestamp: number;
   settings: GenerationSettings;
   variant: number;
+  productCode?: string;
 }
 
 export enum AppState {

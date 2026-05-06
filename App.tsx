@@ -18,7 +18,8 @@ import {
   Settings,
   ArrowLeft,
   Wand2,
-  Loader2
+  Loader2,
+  X
 } from 'lucide-react';
 import { AppState, GenerationSettings, GeneratedImage, AspectRatio, ImageSize, AISuggestions, VisualStyle, ColorChangeEntry, CameraSettings, PackagingFaces, PropConfig } from './types';
 import { 
@@ -39,9 +40,24 @@ import {
   analyzeStudioConcept
 } from './services/geminiService';
 
+export interface BatchItem {
+  url: string;
+  code: string;
+  status?: 'pending' | 'processing' | 'done' | 'error';
+  file?: File;
+  originalName?: string;
+}
+
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.READY);
   const [loadingMessage, setLoadingMessage] = useState<string>("");
+  const [errorMessage, setErrorMessage] = useState<string>("");
+  const showError = (msg: string) => {
+    setErrorMessage(msg);
+    setTimeout(() => setErrorMessage(""), 5000);
+  };
+  
+  const cancelGenerationRef = useRef<boolean>(false);
   
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [whiteBgWebStep, setWhiteBgWebStep] = useState<number>(1); 
@@ -97,6 +113,8 @@ const App: React.FC = () => {
   const [editQuality, setEditQuality] = useState<ImageSize>('2K');
   const [hasApiKey, setHasApiKey] = useState(true);
   const [imageUrlInput, setImageUrlInput] = useState('');
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchItems, setBatchItems] = useState<BatchItem[]>([{ url: '', code: '' }]);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -176,53 +194,41 @@ const App: React.FC = () => {
           sockets: [...(prev.sockets || []), { id: Date.now().toString(), image: base64, quantity: 1, applianceNote: '' }] 
         }));
       }
-    } catch (error) { alert("Lỗi khi tải ảnh."); }
+    } catch (error) { showError("Lỗi khi tải ảnh."); }
     e.target.value = '';
   };
 
   const startGeneration = async (overrideSettings?: Partial<GenerationSettings>) => {
+    if (isBatchMode) {
+      startBatchGeneration(overrideSettings);
+      return;
+    }
+    
+    let finalReferenceImage = settings.referenceImage;
+    if (!finalReferenceImage && !imageUrlInput) {
+      showError("Vui lòng tải lên ảnh SP gốc hoặc dán URL hình ảnh trước khi tạo.");
+      return;
+    }
+
     setAppState(AppState.GENERATING);
     setLoadingMessage("Gemini Thinking đang chuẩn bị kiệt tác...");
     try {
-      let finalReferenceImage = settings.referenceImage;
-      
       if (!finalReferenceImage && imageUrlInput) {
         setLoadingMessage("Đang tải ảnh từ URL...");
         try {
-          let blob: Blob | null = null;
-          const proxies = [
-            imageUrlInput, // Try direct first
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(imageUrlInput)}`,
-            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(imageUrlInput)}`,
-            `https://corsproxy.io/?${encodeURIComponent(imageUrlInput)}`
-          ];
-          
-          let lastError;
-          for (const url of proxies) {
-            try {
-              const response = await fetch(url);
-              if (response.ok) {
-                blob = await response.blob();
-                break;
-              }
-            } catch (e) {
-              lastError = e;
-            }
-          }
-
-          if (!blob) throw lastError || new Error("Failed to load image from URL");
+          const blob = await extractImageFromUrl(imageUrlInput);
 
           finalReferenceImage = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onloadend = () => resolve(reader.result as string);
             reader.onerror = reject;
-            reader.readAsDataURL(blob!);
+            reader.readAsDataURL(blob);
           });
           setSettings(prev => ({ ...prev, referenceImage: finalReferenceImage }));
           setImageUrlInput('');
         } catch (error) {
           console.error("Lỗi khi tải ảnh từ URL:", error);
-          alert("Không thể tải ảnh từ URL. Vui lòng kiểm tra lại đường dẫn hoặc tải ảnh lên trực tiếp.");
+          showError("Không thể tải ảnh từ URL. Vui lòng kiểm tra lại đường dẫn hoặc tải ảnh lên trực tiếp.");
           setAppState(AppState.READY);
           return;
         }
@@ -235,15 +241,294 @@ const App: React.FC = () => {
       const newImages: GeneratedImage[] = urls.map((url, i) => ({ id: `${time}-${i}`, url, prompt: finalSettings.concept, timestamp: time, settings: { ...finalSettings }, variant: i + 1 }));
       setGallery(prev => [...newImages, ...prev]);
       setActiveImage(newImages[0]);
+      
+      // Auto download generated images
+      newImages.forEach((img, i) => {
+        const fileName = finalSettings.numImages > 1 
+          ? `${finalSettings.productCode || 'product'}-${i + 1}.jpg` 
+          : `${finalSettings.productCode || 'product'}.jpg`;
+        downloadImage(img.url, fileName);
+      });
     } catch (error: any) {
       console.error(error);
       if (error.message === "AUTH_ERROR" || error.message?.includes("Requested entity was not found")) {
         setHasApiKey(false);
-        alert("Vui lòng chọn lại API Key.");
+        showError("Vui lòng chọn lại API Key.");
       } else {
-        alert("Lỗi tạo ảnh.");
+        showError("Lỗi tạo ảnh.");
       }
     } finally { setAppState(AppState.READY); }
+  };
+
+  const extractImageFromUrl = async (url: string): Promise<Blob> => {
+    const proxies = [
+      url,
+      `https://wsrv.nl/?url=${encodeURIComponent(url)}`,
+      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+      `https://thingproxy.freeboard.io/fetch/${url}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+      `https://corsproxy.io/?${encodeURIComponent(url)}`
+    ];
+    
+    let responseBlob: Blob | null = null;
+    for (const proxyUrl of proxies) {
+      try {
+        const response = await fetch(proxyUrl);
+        if (response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('text/html')) {
+            // It's an HTML page, try to extract og:image
+            const text = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'text/html');
+            let imgUrl = doc.querySelector('meta[property="og:image"]')?.getAttribute('content') ||
+                         doc.querySelector('meta[name="twitter:image"]')?.getAttribute('content');
+            
+            if (!imgUrl) {
+              // Fallback to first large image
+              const imgs = Array.from(doc.querySelectorAll('img'));
+              for (const img of imgs) {
+                const src = img.getAttribute('src');
+                if (src && !src.includes('logo') && !src.includes('icon')) {
+                  imgUrl = new URL(src, url).href;
+                  break;
+                }
+              }
+            }
+            
+            if (imgUrl) {
+              // Fetch the extracted image URL
+              return extractImageFromUrl(imgUrl);
+            }
+            throw new Error("No image found in HTML");
+          } else {
+            responseBlob = await response.blob();
+            if (responseBlob.type.startsWith('image/') || responseBlob.type === 'application/octet-stream' || responseBlob.size > 0) {
+              return responseBlob;
+            }
+          }
+        }
+      } catch (e) {
+        // ignore and try next proxy
+      }
+    }
+    throw new Error(`Failed to load image from URL: ${url}`);
+  };
+
+  const handleBatchItemChange = (index: number, field: 'url' | 'code', value: string) => {
+    const newItems = [...batchItems];
+    newItems[index][field] = value;
+    newItems[index].status = 'pending';
+    
+    if (field === 'url' && newItems[index].file) {
+      newItems[index].file = undefined;
+      newItems[index].originalName = undefined;
+    }
+
+    // If this is the last item and both fields are filled, add a new empty row
+    if (index === newItems.length - 1 && newItems[index].url.trim() !== '' && newItems[index].code.trim() !== '') {
+      newItems.push({ url: '', code: '' });
+    }
+    
+    setBatchItems(newItems);
+  };
+
+  const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter((f: File) => f.type.startsWith('image/'));
+    if (files.length === 0) {
+      showError("Không tìm thấy hình ảnh nào trong thư mục.");
+      return;
+    }
+    
+    const newItems: BatchItem[] = files.map((file: File) => {
+      const nameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      return {
+        url: `[Tệp cục bộ] ${file.name}`,
+        code: nameWithoutExt,
+        status: 'pending',
+        file: file,
+        originalName: file.name
+      };
+    });
+    
+    if (files.length > 10) {
+      alert("Thư mục có hơn 10 ảnh, hệ thống tự động chọn 10 ảnh đầu tiên để tránh quá tải.");
+    }
+
+    if (newItems.length > 0) {
+      newItems.push({ url: '', code: '' });
+    }
+
+    setBatchItems(newItems);
+    e.target.value = '';
+  };
+
+  const handleRemoveBatchItem = (index: number) => {
+    const newItems = [...batchItems];
+    newItems.splice(index, 1);
+    if (newItems.length === 0) {
+      newItems.push({ url: '', code: '' });
+    }
+    setBatchItems(newItems);
+  };
+
+  const downloadImage = (url: string, filename: string) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      const lines = text.split('\n');
+      const newItems: BatchItem[] = [];
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        // Split by comma, semicolon or tab. Handle basic CSV format.
+        const parts = line.split(/[,;\t]/);
+        if (parts.length >= 2) {
+          let urlValue = parts[0].trim();
+          let codeValue = parts[1].trim();
+          // Auto detect if columns are inverted (Code, URL instead of URL, Code)
+          if (!urlValue.startsWith('http') && !urlValue.startsWith('data:') && 
+              (codeValue.startsWith('http') || codeValue.startsWith('data:'))) {
+            urlValue = parts[1].trim();
+            codeValue = parts[0].trim();
+          }
+          newItems.push({ url: urlValue, code: codeValue });
+        } else if (parts.length === 1) {
+          newItems.push({ url: parts[0].trim(), code: '' });
+        }
+      }
+      
+      if (newItems.length === 0) {
+        newItems.push({ url: '', code: '' });
+      } else {
+        // Add an empty row at the end
+        newItems.push({ url: '', code: '' });
+      }
+      
+      setBatchItems(newItems);
+    };
+    reader.readAsText(file);
+    
+    // Reset input
+    e.target.value = '';
+  };
+
+  const stopGeneration = () => {
+    cancelGenerationRef.current = true;
+    setLoadingMessage("Đang dừng quá trình tạo ảnh...");
+  };
+
+  const startBatchGeneration = async (overrideSettings?: Partial<GenerationSettings>) => {
+    const validCount = batchItems.filter(item => item.url.trim() !== '' || item.file).length;
+    if (validCount === 0) {
+      showError("Vui lòng nhập ít nhất một URL hình ảnh hoặc tải thư mục ảnh lên.");
+      return;
+    }
+
+    setAppState(AppState.GENERATING);
+    cancelGenerationRef.current = false;
+    
+    // Reset statuses for valid items
+    setBatchItems(prev => prev.map(item => ({
+      ...item,
+      status: item.url.trim() !== '' ? 'pending' : undefined
+    })));
+
+    let processedCount = 0;
+    
+    for (let i = 0; i < batchItems.length; i++) {
+      if (cancelGenerationRef.current) {
+        console.log("Generation cancelled by user.");
+        break;
+      }
+
+      const item = batchItems[i];
+      const url = item.url.trim();
+      if (!url) continue;
+      
+      processedCount++;
+      const productCode = item.code.trim() || `SP-${processedCount}`;
+      
+      setLoadingMessage(`Đang xử lý ảnh ${processedCount}/${validCount}: ${productCode}...`);
+      
+      setBatchItems(prev => {
+        const newItems = [...prev];
+        newItems[i] = { ...newItems[i], status: 'processing' };
+        return newItems;
+      });
+      
+      try {
+        let blob: Blob;
+        if (item.file) {
+          blob = item.file;
+        } else {
+          blob = await extractImageFromUrl(url);
+        }
+
+        const base64Image = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        const finalSettings = { ...settings, referenceImage: base64Image, productImages: [], ...overrideSettings };
+        const generatedUrl = await generateProductImage(finalSettings, 1);
+        
+        const time = Date.now();
+        const newImage: GeneratedImage[] = [{ 
+          id: `${time}-${i}`, 
+          url: generatedUrl, 
+          prompt: finalSettings.concept, 
+          timestamp: time, 
+          settings: { ...finalSettings }, 
+          variant: 1,
+          productCode: productCode
+        }];
+        
+        setGallery(prev => [...newImage, ...prev]);
+        setActiveImage(newImage[0]);
+        
+        // Auto download generated image
+        const downloadName = item.originalName ? item.originalName : `${productCode}.jpg`;
+        downloadImage(generatedUrl, downloadName);
+
+        setBatchItems(prev => {
+          const newItems = [...prev];
+          newItems[i] = { ...newItems[i], status: 'done' };
+          return newItems;
+        });
+
+      } catch (error: any) {
+        console.error(`Lỗi khi xử lý dòng ${i + 1}:`, error);
+        setBatchItems(prev => {
+          const newItems = [...prev];
+          newItems[i] = { ...newItems[i], status: 'error' };
+          return newItems;
+        });
+        if (error.message === "AUTH_ERROR" || error.message?.includes("Requested entity was not found")) {
+           setHasApiKey(false);
+           showError("Vui lòng chọn lại API Key.");
+           break; // Stop processing further items
+        }
+        // Continue to next image even if one fails for other reasons
+      }
+    }
+    
+    setAppState(AppState.READY);
+    setLoadingMessage("");
   };
 
   const handleEditImage = async () => {
@@ -267,9 +552,9 @@ const App: React.FC = () => {
       console.error(error);
       if (error.message === "AUTH_ERROR" || error.message?.includes("Requested entity was not found")) {
         setHasApiKey(false);
-        alert("Vui lòng chọn lại API Key.");
+        showError("Vui lòng chọn lại API Key.");
       } else {
-        alert("Lỗi chỉnh sửa ảnh.");
+        showError("Lỗi chỉnh sửa ảnh.");
       }
     } finally {
       setIsEditingImage(false);
@@ -335,34 +620,104 @@ const App: React.FC = () => {
   // 7.5 Làm ảnh nền trắng Website
   const renderWhiteBgWebWorkflow = () => (
     <div className="space-y-6">
-      <div className="space-y-4">
-        <div>
-          <label className="block text-[9px] font-bold text-slate-400 uppercase mb-2">Thông tin cơ bản</label>
-          <div className="flex flex-col gap-3">
-            <input type="text" placeholder="Tên sản phẩm..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-cyan-400" value={settings.productName} onChange={e => setSettings({...settings, productName: e.target.value})} />
-            <input type="text" placeholder="Mã sản phẩm..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-cyan-400" value={settings.productCode || ''} onChange={e => setSettings({...settings, productCode: e.target.value})} />
+      <div className="flex items-center justify-between bg-white/5 p-3 rounded-xl border border-white/10">
+        <label className="text-xs font-bold text-white flex items-center gap-2 cursor-pointer">
+          <input 
+            type="checkbox" 
+            checked={isBatchMode} 
+            onChange={(e) => setIsBatchMode(e.target.checked)}
+            className="w-4 h-4 rounded border-white/20 bg-transparent text-cyan-500 focus:ring-cyan-500 focus:ring-offset-0"
+          />
+          Chế độ tạo hàng loạt (Batch Mode)
+        </label>
+      </div>
+
+      {isBatchMode ? (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center mb-2">
+            <label className="block text-[9px] font-bold text-slate-400 uppercase">Danh sách URL và Mã sản phẩm</label>
+            <div className="flex gap-2">
+              <label className="cursor-pointer bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold py-1 px-3 rounded-lg transition-colors">
+                Tải lên CSV
+                <input type="file" accept=".csv" className="hidden" onChange={handleCSVUpload} />
+              </label>
+              <label className="cursor-pointer bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold py-1 px-3 rounded-lg transition-colors">
+                Tải Thư Mục
+                <input type="file" /* @ts-ignore */ webkitdirectory="true" directory="true" multiple className="hidden" onChange={handleFolderUpload} accept="image/*" />
+              </label>
+            </div>
+          </div>
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+            {batchItems.map((item, index) => (
+              <div key={index} className="flex gap-2 items-center">
+                <div className="w-5 flex justify-center flex-shrink-0">
+                  {item.status === 'done' && <Check className="w-4 h-4 text-green-500" />}
+                  {item.status === 'processing' && <Loader2 className="w-4 h-4 text-cyan-500 animate-spin" />}
+                  {item.status === 'error' && <span className="text-red-500 font-bold text-xs">X</span>}
+                  {(!item.status || item.status === 'pending') && <div className="w-3 h-3 rounded-sm border border-white/20" />}
+                </div>
+                <div className="w-4 text-left flex-shrink-0 text-[10px] text-slate-400 font-bold font-mono">
+                  {index + 1}
+                </div>
+                <input
+                  type="text"
+                  placeholder="URL Hình ảnh"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-cyan-400"
+                  value={item.url}
+                  onChange={(e) => handleBatchItemChange(index, 'url', e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="Mã SP"
+                  className="w-1/3 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-cyan-400"
+                  value={item.code}
+                  onChange={(e) => handleBatchItemChange(index, 'code', e.target.value)}
+                />
+                <button 
+                  onClick={() => handleRemoveBatchItem(index)}
+                  className="w-8 h-8 flex items-center justify-center bg-red-500/10 text-red-500 hover:bg-red-500/20 rounded-xl transition-colors flex-shrink-0"
+                  title="Xóa dòng này"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button onClick={() => startBatchGeneration({ visualStyle: 'WHITE_BG_WEBSITE', whiteBgWebPromptType: 'A' })} className="flex-1 py-4 bg-cyan-500 text-black font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all opacity-100">Bóng đổ mềm</button>
+            <button onClick={() => startBatchGeneration({ visualStyle: 'WHITE_BG_WEBSITE', whiteBgWebPromptType: 'B' })} className="flex-1 py-4 bg-blue-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all opacity-100">Bóng đổ gắt</button>
+            <button onClick={() => startBatchGeneration({ visualStyle: 'WHITE_BG_WEBSITE', whiteBgWebPromptType: 'C' })} className="flex-1 py-4 bg-indigo-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all opacity-100">Bộ sản phẩm</button>
           </div>
         </div>
-
-        <div>
-          <label className="block text-[9px] font-bold text-slate-400 uppercase mb-2">Ảnh sản phẩm gốc (Tải lên hoặc dán URL)</label>
-          <div className="flex gap-2 mb-2">
-            <input 
-              type="text" 
-              placeholder="Dán đường dẫn hình ảnh (URL)..." 
-              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-400" 
-              value={imageUrlInput} 
-              onChange={e => {
-                setImageUrlInput(e.target.value);
-                if (e.target.value) {
-                  setSettings(prev => ({ ...prev, referenceImage: null }));
-                }
-              }} 
-            />
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-2">Thông tin cơ bản</label>
+            <div className="flex flex-col gap-3">
+              <input type="text" placeholder="Tên sản phẩm..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-cyan-400" value={settings.productName} onChange={e => setSettings({...settings, productName: e.target.value})} />
+              <input type="text" placeholder="Mã sản phẩm..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-cyan-400" value={settings.productCode || ''} onChange={e => setSettings({...settings, productCode: e.target.value})} />
+            </div>
           </div>
-          <div onClick={() => refFileRef.current?.click()} className="h-48 bg-white/5 border-2 border-dashed border-white/10 rounded-xl flex items-center justify-center cursor-pointer overflow-hidden group relative hover:border-cyan-400 transition-all">
-             {(settings.referenceImage || imageUrlInput) ? (
-               <>
+
+          <div>
+            <label className="block text-[9px] font-bold text-slate-400 uppercase mb-2">Ảnh sản phẩm gốc (Tải lên hoặc dán URL)</label>
+            <div className="flex gap-2 mb-2">
+              <input 
+                type="text" 
+                placeholder="Dán đường dẫn hình ảnh (URL)..." 
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-cyan-400" 
+                value={imageUrlInput} 
+                onChange={e => {
+                  setImageUrlInput(e.target.value);
+                  if (e.target.value) {
+                    setSettings(prev => ({ ...prev, referenceImage: null }));
+                  }
+                }} 
+              />
+            </div>
+            <div onClick={() => refFileRef.current?.click()} className="h-48 bg-white/5 border-2 border-dashed border-white/10 rounded-xl flex items-center justify-center cursor-pointer overflow-hidden group relative hover:border-cyan-400 transition-all">
+               {(settings.referenceImage || imageUrlInput) ? (
+                 <>
                  <img src={settings.referenceImage || imageUrlInput} className="h-full w-full object-contain" referrerPolicy="no-referrer" onError={(e) => {
                    // Hide broken image icon if URL is invalid
                    (e.target as HTMLImageElement).style.display = 'none';
@@ -380,11 +735,12 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex gap-2 pt-2">
-          <button disabled={!settings.referenceImage && !imageUrlInput} onClick={() => startGeneration({ whiteBgWebPromptType: 'A' })} className="flex-1 py-4 bg-cyan-500 text-black font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ mềm</button>
-          <button disabled={!settings.referenceImage && !imageUrlInput} onClick={() => startGeneration({ whiteBgWebPromptType: 'B' })} className="flex-1 py-4 bg-blue-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bóng đổ gắt</button>
-          <button disabled={!settings.referenceImage && !imageUrlInput} onClick={() => startGeneration({ whiteBgWebPromptType: 'C' })} className="flex-1 py-4 bg-indigo-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all disabled:opacity-50">Bộ sản phẩm</button>
+          <button onClick={() => startGeneration({ visualStyle: 'WHITE_BG_WEBSITE', whiteBgWebPromptType: 'A' })} className="flex-1 py-4 bg-cyan-500 text-black font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all opacity-100">Bóng đổ mềm</button>
+          <button onClick={() => startGeneration({ visualStyle: 'WHITE_BG_WEBSITE', whiteBgWebPromptType: 'B' })} className="flex-1 py-4 bg-blue-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all opacity-100">Bóng đổ gắt</button>
+          <button onClick={() => startGeneration({ visualStyle: 'WHITE_BG_WEBSITE', whiteBgWebPromptType: 'C' })} className="flex-1 py-4 bg-indigo-500 text-white font-bold rounded-xl uppercase text-xs shadow-lg hover:brightness-110 transition-all opacity-100">Bộ sản phẩm</button>
         </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 
@@ -470,6 +826,9 @@ const App: React.FC = () => {
   }
 
   const getDownloadFileName = (image: GeneratedImage) => {
+    if (image.productCode) {
+      return `${image.productCode}.png`;
+    }
     if (image.settings.visualStyle === 'WHITE_BG_WEBSITE' && image.settings.productCode) {
       return `${image.settings.productCode}.png`;
     }
@@ -496,6 +855,20 @@ const App: React.FC = () => {
           <div><h1 className="text-xl font-bold tracking-tighter text-white">Ai Image Elmich</h1><p className="text-[8px] font-bold text-[#caf0f8] tracking-[0.3em] uppercase">Creative Studio 2026</p></div>
         </div>
       </header>
+
+      <AnimatePresence>
+        {errorMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] bg-red-500/90 text-white px-6 py-3 rounded-2xl shadow-2xl font-bold text-xs flex items-center gap-2 max-w-md w-max"
+          >
+            <X className="w-4 h-4" />
+            {errorMessage}
+          </motion.div>
+        )}
+      </AnimatePresence>
       <main className="flex-1 flex flex-col lg:flex-row gap-6 p-6 max-w-[1600px] mx-auto w-full relative">
         <aside className="w-full lg:w-[420px] glass-card rounded-[35px] overflow-hidden lg:h-[calc(100vh-120px)] lg:sticky lg:top-24 z-10 bg-gradient-to-b from-white/[0.04] to-transparent"><div className="p-6 h-full overflow-y-auto custom-scrollbar">{renderSidebar()}</div></aside>
         <section className="flex-1 flex flex-col gap-6 relative z-10">
@@ -507,6 +880,14 @@ const App: React.FC = () => {
               <div className="text-center z-10 space-y-6 animate-pulse">
                 <div className="relative w-32 h-32 mx-auto"><div className="absolute inset-0 border-[4px] border-[#caf0f8] border-t-transparent rounded-full animate-spin" /></div>
                 <h3 className="text-xl font-bold text-white uppercase tracking-tighter">{loadingMessage}</h3>
+                {appState === AppState.GENERATING && isBatchMode && (
+                  <button 
+                    onClick={stopGeneration}
+                    className="mt-4 px-6 py-3 bg-red-500/20 text-red-500 hover:bg-red-500/40 border border-red-500/50 rounded-2xl font-bold text-xs uppercase tracking-widest transition-colors"
+                  >
+                    Dừng tạo hàng loạt
+                  </button>
+                )}
               </div>
             ) : activeImage ? (
               <div className="relative z-10 flex flex-col items-center gap-6 animate-fade-in w-full">
